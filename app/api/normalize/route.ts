@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { browserOpenAiApiKey, validOpenAiApiKey } from '@/lib/openai-key';
 
 export const runtime = 'edge';
 
@@ -16,11 +17,19 @@ function outputText(response: unknown): string {
 
 export async function POST(request: Request) {
   const runtimeEnv = env as unknown as Record<string, string | undefined>;
-  const apiKey = runtimeEnv.OPENAI_API_KEY;
+  const browserApiKey = browserOpenAiApiKey(request);
+  const apiKey = browserApiKey || runtimeEnv.OPENAI_API_KEY;
   if (!apiKey) {
     return Response.json(
       { enabled: false, message: 'AI 服务尚未配置，已使用 CAD 结构规则完成自动提取。' },
       { status: 503 },
+    );
+  }
+
+  if (!validOpenAiApiKey(apiKey)) {
+    return Response.json(
+      { enabled: false, message: 'OpenAI API Key 格式不正确。' },
+      { status: 400 },
     );
   }
 

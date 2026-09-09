@@ -5,14 +5,29 @@ import {
   AlertCircle,
   CheckCircle2,
   Download,
+  Eye,
+  EyeOff,
   LoaderCircle,
   Save,
   ScanLine,
+  Settings2,
+  Sparkles,
   UploadCloud,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { CadPreview } from '@/components/cad-preview';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import {
   Table,
@@ -63,6 +78,11 @@ export function QuoteWorkbench() {
   const [status, setStatus] = useState<WorkStatus>('ready');
   const [message, setMessage] = useState('当前展示已从样例 DWG 自动提取的结果');
   const [saved, setSaved] = useState(false);
+  const [aiConfigured, setAiConfigured] = useState(false);
+  const [apiKeyDraft, setApiKeyDraft] = useState('');
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [savingApiKey, setSavingApiKey] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const quoteRef = useRef<HTMLDivElement>(null);
 
@@ -73,6 +93,50 @@ export function QuoteWorkbench() {
   const taxAmount = pretaxTotal * 0.13;
   const grandTotal = pretaxTotal + taxAmount;
   const progress = status === 'reading' ? 38 : status === 'normalizing' ? 76 : status === 'done' ? 100 : 0;
+
+  useEffect(() => {
+    void fetch('/api/ai-settings', { cache: 'no-store' })
+      .then((response) => response.json() as Promise<{ configured?: boolean }>)
+      .then((settings: { configured?: boolean }) => setAiConfigured(Boolean(settings.configured)))
+      .catch(() => setAiConfigured(false));
+  }, []);
+
+  async function saveApiKey() {
+    const nextKey = apiKeyDraft.trim();
+    if (nextKey && !nextKey.startsWith('sk-')) {
+      setMessage('OpenAI API Key 格式不正确，应以 sk- 开头');
+      return;
+    }
+    if (!nextKey) return;
+    setSavingApiKey(true);
+    try {
+      const response = await fetch('/api/ai-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: nextKey }),
+      });
+      if (!response.ok) {
+        setMessage('OpenAI API Key 保存失败，请检查格式');
+        return;
+      }
+      setAiConfigured(true);
+      setApiKeyDraft('');
+      setAiSettingsOpen(false);
+      setShowApiKey(false);
+      setMessage('AI 服务已配置，可上传 DWG 开始智能规范化');
+    } finally {
+      setSavingApiKey(false);
+    }
+  }
+
+  async function clearApiKey() {
+    const response = await fetch('/api/ai-settings', { method: 'DELETE' });
+    const settings = (await response.json()) as { configured?: boolean };
+    setAiConfigured(Boolean(settings.configured));
+    setApiKeyDraft('');
+    setShowApiKey(false);
+    setMessage(settings.configured ? '已恢复使用服务器配置的 AI Key' : 'AI Key 已清除，将使用 CAD 结构规则提取');
+  }
 
   async function normalizeWithAI(extracted: ExtractionResult) {
     try {
@@ -233,9 +297,78 @@ export function QuoteWorkbench() {
             <div className="grid size-10 place-items-center rounded-lg bg-cyan-400 text-[#071b33]"><ScanLine className="size-6" /></div>
             <div><h1 className="text-lg font-semibold tracking-tight">欧迈自动报价</h1><p className="text-sm text-slate-300">CAD 零件识别与报价生成</p></div>
           </div>
-          <Badge className="border-cyan-300/30 bg-cyan-300/10 text-cyan-200">MVP 0.1</Badge>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="border-white/20 bg-white/5 text-white hover:bg-white/10 hover:text-white"
+              onClick={() => {
+                setApiKeyDraft('');
+                setAiSettingsOpen(true);
+              }}
+            >
+              <Settings2 className="size-4" />
+              AI 设置
+              <span className={`size-2 rounded-full ${aiConfigured ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            </Button>
+            <Badge className="border-cyan-300/30 bg-cyan-300/10 text-cyan-200">MVP 0.1</Badge>
+          </div>
         </div>
       </header>
+
+      <Dialog open={aiSettingsOpen} onOpenChange={setAiSettingsOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="size-4 text-cyan-600" />
+              AI 识别设置
+            </DialogTitle>
+            <DialogDescription>
+              用于规范零件名称、规格和材料。密钥保存在当前浏览器会话的安全 Cookie 中，关闭浏览器后自动清除。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="openai-api-key">OpenAI API Key</Label>
+            <div className="relative">
+              <Input
+                id="openai-api-key"
+                type={showApiKey ? 'text' : 'password'}
+                value={apiKeyDraft}
+                onChange={(event) => setApiKeyDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void saveApiKey();
+                }}
+                placeholder="sk-..."
+                autoComplete="off"
+                spellCheck={false}
+                className="h-10 pr-10 font-mono"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="absolute right-1 top-1"
+                aria-label={showApiKey ? '隐藏 API Key' : '显示 API Key'}
+                onClick={() => setShowApiKey((visible) => !visible)}
+              >
+                {showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </Button>
+            </div>
+            <p className="text-xs leading-5 text-slate-500">
+              保存后页面脚本无法从 Cookie 中读取密钥；它不会写入报价数据库或源代码。
+            </p>
+          </div>
+          <DialogFooter>
+            {aiConfigured && (
+              <Button type="button" variant="outline" onClick={() => void clearApiKey()}>
+                清除密钥
+              </Button>
+            )}
+            <Button type="button" disabled={savingApiKey || !apiKeyDraft.trim()} className="bg-cyan-600 text-white hover:bg-cyan-700" onClick={() => void saveApiKey()}>
+              {savingApiKey ? '正在保存…' : '保存设置'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="mx-auto grid max-w-[1500px] gap-5 px-5 py-5 lg:grid-cols-[330px_minmax(0,1fr)] lg:px-8">
         <aside className="space-y-5">
@@ -281,6 +414,8 @@ export function QuoteWorkbench() {
             <Metric label="未税报价" value={money.format(pretaxTotal)} detail={`示例成本 ${money.format(costTotal)}`} />
             <Metric label="含税报价" value={money.format(grandTotal)} detail="增值税率 13%" accent />
           </div>
+
+          <CadPreview key={result.drawingName} svg={result.previewSvg} drawingName={result.drawingName} />
 
           <Card className="overflow-hidden border-slate-200 shadow-sm">
             <CardHeader className="flex-row items-center justify-between border-b border-slate-200 bg-white">

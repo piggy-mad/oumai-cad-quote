@@ -17,6 +17,7 @@ export type ExtractionResult = {
   warnings: string[];
   entityCounts: Record<string, number>;
   aiNormalized: boolean;
+  previewSvg?: string;
 };
 
 type Point = { x: number; y: number; z?: number };
@@ -282,10 +283,8 @@ export async function extractDwg(
   const raw = parser.dwg_read_data(await file.arrayBuffer(), Dwg_File_Type.DWG);
   if (raw === undefined) throw new Error('DWG 文件读取失败');
   try {
-    const database = parser.convert(raw) as unknown as {
-      entities?: CadEntity[];
-    };
-    const entities = database.entities ?? [];
+    const database = parser.convert(raw);
+    const entities = (database.entities ?? []) as unknown as CadEntity[];
     const entityCounts: Record<string, number> = {};
     for (const entity of entities) {
       const entityType = entity.type || 'UNKNOWN';
@@ -300,6 +299,12 @@ export async function extractDwg(
     const warnings = table.parts
       .filter((part) => part.confidence < 0.8)
       .map((part) => `第 ${part.row} 行存在缺失字段`);
+    let previewSvg: string | undefined;
+    try {
+      previewSvg = parser.dwg_to_svg(database);
+    } catch {
+      warnings.push('图纸预览生成失败，但零件提取结果仍可使用');
+    }
     return {
       projectCode,
       drawingName: file.name,
@@ -309,6 +314,7 @@ export async function extractDwg(
       warnings,
       entityCounts,
       aiNormalized: false,
+      previewSvg,
     };
   } finally {
     parser.dwg_free(raw);
