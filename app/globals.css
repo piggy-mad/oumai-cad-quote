@@ -87,13 +87,6 @@ body {
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-.quote-sheet {
-  position: fixed;
-  left: -10000px;
-  top: 0;
-  width: 794px;
-}
-
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
