@@ -1,13 +1,21 @@
 'use client';
 
 import { useEffect, useRef, useState, type PointerEvent, type WheelEvent } from 'react';
-import { Focus, Minus, Plus, ScanLine } from 'lucide-react';
+import { Focus, Maximize2, Minus, Plus, ScanLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 type Viewport = { scale: number; x: number; y: number };
 
-const INITIAL_VIEWPORT: Viewport = { scale: 1, x: 0, y: 0 };
+const INITIAL_VIEWPORT: Viewport = { scale: 1.25, x: 0, y: 0 };
+const FIT_VIEWPORT: Viewport = { scale: 1, x: 0, y: 0 };
 
 function clampScale(value: number): number {
   return Math.min(8, Math.max(0.5, value));
@@ -47,6 +55,7 @@ export function CadPreview({ svg, drawingName }: { svg?: string; drawingName: st
   const [previewUrl, setPreviewUrl] = useState<string>();
   const [viewport, setViewport] = useState<Viewport>(INITIAL_VIEWPORT);
   const [dragging, setDragging] = useState(false);
+  const [fullScreen, setFullScreen] = useState(false);
   const dragStart = useRef<{
     pointerId: number;
     clientX: number;
@@ -106,8 +115,70 @@ export function CadPreview({ svg, drawingName }: { svg?: string; drawingName: st
     setDragging(false);
   }
 
+  function previewSurface(expanded = false) {
+    return (
+      <div
+        className={`relative touch-none overflow-hidden bg-[#07111f] select-none ${
+          expanded ? 'h-[calc(96vh-6.5rem)] min-h-0' : 'h-[58vh] min-h-[500px] max-h-[700px]'
+        } ${previewUrl ? (dragging ? 'cursor-grabbing' : 'cursor-grab') : ''}`}
+        onWheel={handleWheel}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onDoubleClick={() => setViewport(FIT_VIEWPORT)}
+      >
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 opacity-30"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(34,211,238,.09) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,.09) 1px, transparent 1px)',
+            backgroundSize: '24px 24px',
+          }}
+        />
+        {previewUrl ? (
+          <>
+            <div
+              className="absolute inset-5 grid place-items-center will-change-transform"
+              style={{
+                transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.scale})`,
+              }}
+            >
+              {/* A generated local SVG blob must stay an ordinary image so it remains script-isolated. */}
+              {/* oxlint-disable-next-line next/no-img-element */}
+              <img
+                src={previewUrl}
+                alt={`${drawingName} CAD 图纸预览`}
+                draggable={false}
+                className="pointer-events-none h-full w-full object-contain"
+              />
+            </div>
+            <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-white/10 bg-slate-950/75 px-2.5 py-1.5 text-xs text-slate-300 backdrop-blur">
+              滚轮缩放 · 拖动平移 · 双击适应窗口
+            </div>
+            <div className="pointer-events-none absolute right-3 bottom-3 rounded-md border border-cyan-300/20 bg-slate-950/75 px-2.5 py-1.5 font-mono text-xs text-cyan-200 backdrop-blur">
+              {Math.round(viewport.scale * 100)}%
+            </div>
+          </>
+        ) : (
+          <div className="relative grid h-full place-items-center px-6 text-center">
+            <div>
+              <div className="mx-auto grid size-14 place-items-center rounded-2xl border border-cyan-300/15 bg-cyan-300/5">
+                <ScanLine className="size-7 text-cyan-400" />
+              </div>
+              <p className="mt-4 text-base font-medium text-slate-200">等待 CAD 图纸</p>
+              <p className="mt-2 text-sm text-slate-400">上传 DWG 后可直接检查图形、文字和装配布局</p>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <Card className="overflow-hidden border-slate-200 shadow-sm">
+    <>
+      <Card className="overflow-hidden border-slate-200 shadow-sm">
       <CardHeader className="flex-row items-center justify-between border-b border-slate-200 bg-white">
         <div className="min-w-0">
           <CardTitle className="text-base">CAD 图纸预览</CardTitle>
@@ -145,70 +216,35 @@ export function CadPreview({ svg, drawingName }: { svg?: string; drawingName: st
             disabled={!previewUrl}
             aria-label="使图纸适应窗口"
             title="适应窗口"
-            onClick={() => setViewport(INITIAL_VIEWPORT)}
+            onClick={() => setViewport(FIT_VIEWPORT)}
           >
             <Focus className="size-4" />
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            disabled={!previewUrl}
+            aria-label="全屏查看图纸"
+            title="全屏查看"
+            onClick={() => setFullScreen(true)}
+          >
+            <Maximize2 className="size-4" />
+          </Button>
         </div>
       </CardHeader>
-      <CardContent className="p-0">
-        <div
-          className={`relative h-[420px] touch-none overflow-hidden bg-[#07111f] select-none ${
-            previewUrl ? (dragging ? 'cursor-grabbing' : 'cursor-grab') : ''
-          }`}
-          onWheel={handleWheel}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-          onDoubleClick={() => setViewport(INITIAL_VIEWPORT)}
-        >
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 opacity-30"
-            style={{
-              backgroundImage:
-                'linear-gradient(rgba(34,211,238,.09) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,.09) 1px, transparent 1px)',
-              backgroundSize: '24px 24px',
-            }}
-          />
-          {previewUrl ? (
-            <>
-              <div
-                className="absolute inset-5 grid place-items-center will-change-transform"
-                style={{
-                  transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.scale})`,
-                }}
-              >
-                {/* A generated local SVG blob must stay an ordinary image so it remains script-isolated. */}
-                {/* oxlint-disable-next-line next/no-img-element */}
-                <img
-                  src={previewUrl}
-                  alt={`${drawingName} CAD 图纸预览`}
-                  draggable={false}
-                  className="pointer-events-none h-full w-full object-contain"
-                />
-              </div>
-              <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-white/10 bg-slate-950/75 px-2.5 py-1.5 text-xs text-slate-300 backdrop-blur">
-                滚轮缩放 · 拖动平移 · 双击复位
-              </div>
-              <div className="pointer-events-none absolute right-3 bottom-3 rounded-md border border-cyan-300/20 bg-slate-950/75 px-2.5 py-1.5 font-mono text-xs text-cyan-200 backdrop-blur">
-                {Math.round(viewport.scale * 100)}%
-              </div>
-            </>
-          ) : (
-            <div className="relative grid h-full place-items-center px-6 text-center">
-              <div>
-                <div className="mx-auto grid size-14 place-items-center rounded-2xl border border-cyan-300/15 bg-cyan-300/5">
-                  <ScanLine className="size-7 text-cyan-400" />
-                </div>
-                <p className="mt-4 text-base font-medium text-slate-200">等待 CAD 图纸</p>
-                <p className="mt-2 text-sm text-slate-400">上传 DWG 后可直接检查图形、文字和装配布局</p>
-              </div>
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+        <CardContent className="p-0">{previewSurface()}</CardContent>
+      </Card>
+
+      <Dialog open={fullScreen} onOpenChange={setFullScreen}>
+        <DialogContent className="h-[96vh] w-[96vw] max-w-none gap-0 overflow-hidden p-0 sm:max-w-[96vw]">
+          <DialogHeader className="border-b border-slate-200 bg-white px-5 py-4">
+            <DialogTitle>CAD 全屏预览</DialogTitle>
+            <DialogDescription className="truncate">{drawingName}</DialogDescription>
+          </DialogHeader>
+          {previewSurface(true)}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
