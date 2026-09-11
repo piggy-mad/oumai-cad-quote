@@ -22,6 +22,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogClose,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -38,6 +39,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { extractDwg, type ExtractionResult } from '@/lib/cad-extractor';
+import { generateQuotePdf } from '@/lib/pdf-generator';
 import { quoteParts } from '@/lib/pricing';
 
 const DEMO_RESULT: ExtractionResult = {
@@ -84,7 +86,11 @@ export function QuoteWorkbench() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [savingApiKey, setSavingApiKey] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  const quoteRef = useRef<HTMLDivElement>(null);
+  const pdfUrlRef = useRef<string | undefined>(undefined);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState('');
+  const pdfFileName = `${result.projectCode}-客户报价.pdf`;
 
   const quotedParts = useMemo(() => quoteParts(result.parts), [result.parts]);
   const matchedCount = quotedParts.filter((part) => part.matched).length;
@@ -213,35 +219,45 @@ export function QuoteWorkbench() {
   }
 
   const downloadPdf = useCallback(async () => {
-    if (!quoteRef.current) return;
+    setPdfBusy(true);
     setMessage('正在生成客户版 PDF…');
-    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-      import('html2canvas'),
-      import('jspdf'),
-    ]);
-    const canvas = await html2canvas(quoteRef.current, {
-      scale: 2,
-      backgroundColor: '#ffffff',
-      useCORS: true,
-    });
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const pageWidth = 210;
-    const pageHeight = 297;
-    const imageHeight = (canvas.height * pageWidth) / canvas.width;
-    const image = canvas.toDataURL('image/jpeg', 0.94);
-    let remaining = imageHeight;
-    let offset = 0;
-    pdf.addImage(image, 'JPEG', 0, offset, pageWidth, imageHeight);
-    remaining -= pageHeight;
-    while (remaining > 0) {
-      offset = remaining - imageHeight;
-      pdf.addPage();
-      pdf.addImage(image, 'JPEG', 0, offset, pageWidth, imageHeight);
-      remaining -= pageHeight;
+    try {
+      const blob = await generateQuotePdf({
+        projectCode: result.projectCode,
+        drawingName: result.drawingName,
+        parts: quotedParts,
+        pretaxTotal,
+        taxAmount,
+        grandTotal,
+      });
+      if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
+      const previewUrl = URL.createObjectURL(blob);
+      pdfUrlRef.current = previewUrl;
+      setPdfPreviewUrl(previewUrl);
+      setPdfDialogOpen(true);
+      setMessage('客户版 PDF 已生成，请在预览窗口中下载');
+    } catch (error) {
+      setMessage(error instanceof Error ? `PDF 生成失败：${error.message}` : 'PDF 生成失败，请重试');
+    } finally {
+      setPdfBusy(false);
     }
-    pdf.save(`${result.projectCode}-客户报价.pdf`);
-    setMessage('客户版 PDF 已生成');
-  }, [result.projectCode]);
+  }, [grandTotal, pretaxTotal, quotedParts, result.drawingName, result.projectCode, taxAmount]);
+
+  const savePdfToDevice = useCallback(() => {
+    if (!pdfPreviewUrl) return;
+    const link = document.createElement('a');
+    link.href = pdfPreviewUrl;
+    link.download = pdfFileName;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setMessage(`已开始下载 ${pdfFileName}`);
+  }, [pdfFileName, pdfPreviewUrl]);
+
+  useEffect(() => () => {
+    if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
+  }, []);
 
   useEffect(() => {
     const context = (document as Document & {
@@ -276,7 +292,7 @@ export function QuoteWorkbench() {
                 projectCode: result.projectCode,
                 partCount: quotedParts.length,
                 grandTotal,
-                status: 'downloaded',
+                status: 'preview_ready',
               };
             },
           },
@@ -370,6 +386,33 @@ export function QuoteWorkbench() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={pdfDialogOpen} onOpenChange={setPdfDialogOpen}>
+        <DialogContent className="grid h-[92vh] w-[94vw] max-w-none grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-5xl">
+          <DialogHeader className="border-b border-slate-200 px-5 py-4">
+            <DialogTitle>客户版 PDF 预览</DialogTitle>
+            <DialogDescription>{pdfFileName}</DialogDescription>
+          </DialogHeader>
+          {pdfPreviewUrl ? (
+            <iframe src={pdfPreviewUrl} title="客户版 PDF 预览" className="h-full w-full bg-slate-100" />
+          ) : (
+            <div className="grid place-items-center bg-slate-100 text-sm text-slate-500">正在生成 PDF…</div>
+          )}
+          <DialogFooter className="m-0 rounded-none">
+            <DialogClose render={<Button variant="outline" />}>关闭</DialogClose>
+            {pdfPreviewUrl && (
+              <Button
+                type="button"
+                className="bg-cyan-600 text-white hover:bg-cyan-700"
+                onClick={savePdfToDevice}
+              >
+                <Download className="size-4" />
+                下载到本机
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div className="mx-auto grid max-w-[1500px] gap-5 px-5 py-5 lg:grid-cols-[330px_minmax(0,1fr)] lg:px-8">
         <aside className="space-y-5">
           <Card className="border-slate-200 shadow-sm">
@@ -422,7 +465,7 @@ export function QuoteWorkbench() {
               <div><CardTitle className="text-base">自动提取结果</CardTitle><p className="mt-1 max-w-2xl truncate text-sm text-slate-500">{result.drawingName}</p></div>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => void saveQuote()}><Save className="size-4" />{saved ? '已保存' : '保存草稿'}</Button>
-                <Button className="bg-cyan-600 text-white hover:bg-cyan-700" onClick={() => void downloadPdf()}><Download className="size-4" />导出 PDF</Button>
+                <Button disabled={pdfBusy} className="bg-cyan-600 text-white hover:bg-cyan-700" onClick={() => void downloadPdf()}><Download className="size-4" />{pdfBusy ? '正在生成…' : '导出 PDF'}</Button>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -447,13 +490,6 @@ export function QuoteWorkbench() {
             </CardContent>
           </Card>
 
-          <div ref={quoteRef} className="quote-sheet bg-white p-10 text-slate-950">
-            <div className="border-b-2 border-slate-900 pb-5 text-center"><h2 className="text-2xl font-bold tracking-[0.25em]">设备报价单</h2><p className="mt-2 text-sm text-slate-600">山东欧迈机械股份有限公司</p></div>
-            <div className="grid grid-cols-2 gap-x-10 gap-y-2 py-5 text-sm"><div>项目编号：{result.projectCode}</div><div>报价日期：{new Date().toLocaleDateString('zh-CN')}</div><div className="col-span-2">图纸文件：{result.drawingName}</div></div>
-            <table className="w-full border-collapse text-sm"><thead><tr>{['序号','名称及规格','材料','数量','单位','未税单价','未税金额'].map((label) => <th key={label} className="border border-slate-400 bg-slate-100 px-2 py-2 text-left">{label}</th>)}</tr></thead><tbody>{quotedParts.map((part) => <tr key={part.row}><td className="border border-slate-300 px-2 py-2">{part.row}</td><td className="border border-slate-300 px-2 py-2">{part.name}{part.specification ? ` ${part.specification}` : ''}</td><td className="border border-slate-300 px-2 py-2">{part.material}</td><td className="border border-slate-300 px-2 py-2">{part.quantity}</td><td className="border border-slate-300 px-2 py-2">{part.unit}</td><td className="border border-slate-300 px-2 py-2 text-right">{money.format(part.quoteUnitPrice)}</td><td className="border border-slate-300 px-2 py-2 text-right">{money.format(part.quoteAmount)}</td></tr>)}</tbody></table>
-            <div className="ml-auto mt-6 w-80 space-y-2 text-sm"><Summary label="未税合计" value={money.format(pretaxTotal)} /><Summary label="税额（13%）" value={money.format(taxAmount)} /><div className="flex justify-between border-t-2 border-slate-900 pt-3 text-lg font-bold"><span>含税总价</span><span>{money.format(grandTotal)}</span></div></div>
-            <p className="mt-10 border-t border-slate-300 pt-4 text-xs leading-5 text-slate-500">本报价由 CAD 配置明细自动生成。当前价格为 MVP 示例数据，正式使用前须由价格管理员维护并审核。</p>
-          </div>
         </section>
       </div>
     </main>
